@@ -94,7 +94,7 @@ func getDBQuery(r *http.Request) (*rql.Params, error) {
 	if v := r.URL.Query().Get(QueryParam); v != "" {
 		b, err = base64.StdEncoding.DecodeString(v)
 	} else {
-		b, err = ioutil.ReadAll(io.LimitReader(r.Body, 1<<12))
+		b, err = io.ReadAll(io.LimitReader(r.Body, 1<<12))
 	}
 	if err != nil {
 		return nil, err
@@ -113,9 +113,10 @@ There are two options to build a parser, `rql.New(rql.Config)`, and `rql.MustNew
 var Parser = rql.MustNew(rql.Config{
 	// User if the resource we want to query.
 	Model: User{},
-	// Since we work with gorm, we want to use its column-function, and not rql default.
-	// although, they are pretty the same.
-	ColumnFn: gorm.ToDBName,
+	// ColumnFn translates struct field names to database column names.
+	// The default rql.Column function converts CamelCase to snake_case.
+	// For gorm v2, this default works out of the box.
+	// ColumnFn: gorm.ToDBName,  // gorm v1 (deprecated)
 	// Use your own custom logger. This logger is used only in the building stage.
 	Log: logrus.Printf,
 	// Default limit returned by the `Parse` function if no limit provided by the user.

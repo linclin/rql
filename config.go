@@ -16,16 +16,31 @@ func (o Op) SQL() string {
 
 // Operators that support by rql.
 const (
-	EQ   = Op("eq")   // =
-	NEQ  = Op("neq")  // <>
-	LT   = Op("lt")   // <
-	GT   = Op("gt")   // >
-	LTE  = Op("lte")  // <=
-	GTE  = Op("gte")  // >=
-	LIKE = Op("like") // LIKE "PATTERN"
-	OR   = Op("or")   // disjunction
-	AND  = Op("and")  // conjunction
+	EQ       = Op("eq")       // =
+	NEQ      = Op("neq")      // <>
+	LT       = Op("lt")       // <
+	GT       = Op("gt")       // >
+	LTE      = Op("lte")      // <=
+	GTE      = Op("gte")      // >=
+	LIKE     = Op("like")     // LIKE "PATTERN"
+	NLIKE    = Op("nlike")    // NOT LIKE "PATTERN"
+	IN       = Op("in")       // IN (v1, v2, ...)
+	NIN      = Op("nin")      // NOT IN (v1, v2, ...)
+	BETWEEN  = Op("between")  // BETWEEN v1 AND v2
+	ISNULL   = Op("isnull")   // IS NULL
+	ISNOTNULL = Op("isnotnull") // IS NOT NULL
+	OR       = Op("or")       // disjunction
+	AND      = Op("and")      // conjunction
 )
+
+// Special operators that have non-standard SQL syntax (not "col OP ?").
+var specialOps = map[Op]bool{
+	IN:        true,
+	NIN:       true,
+	BETWEEN:   true,
+	ISNULL:    true,
+	ISNOTNULL: true,
+}
 
 // Default values for configuration.
 const (
@@ -48,15 +63,21 @@ var (
 		'-': "desc",
 	}
 	opFormat = map[Op]string{
-		EQ:   "=",
-		NEQ:  "<>",
-		LT:   "<",
-		GT:   ">",
-		LTE:  "<=",
-		GTE:  ">=",
-		LIKE: "LIKE",
-		OR:   "OR",
-		AND:  "AND",
+		EQ:        "=",
+		NEQ:       "<>",
+		LT:        "<",
+		GT:        ">",
+		LTE:       "<=",
+		GTE:       ">=",
+		LIKE:      "LIKE",
+		NLIKE:     "NOT LIKE",
+		IN:        "IN",
+		NIN:       "NOT IN",
+		BETWEEN:   "BETWEEN",
+		ISNULL:    "IS NULL",
+		ISNOTNULL: "IS NOT NULL",
+		OR:        "OR",
+		AND:       "AND",
 	}
 )
 

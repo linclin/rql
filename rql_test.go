@@ -943,6 +943,139 @@ func TestParse(t *testing.T) {
 			}`),
 			wantErr: true,
 		},
+		{
+			name: "in operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$in": ["foo", "bar", "baz"] }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name IN (?, ?, ?)",
+				FilterArgs: []interface{}{"foo", "bar", "baz"},
+			},
+		},
+		{
+			name: "nin operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$nin": ["foo", "bar"] }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name NOT IN (?, ?)",
+				FilterArgs: []interface{}{"foo", "bar"},
+			},
+		},
+		{
+			name: "between operator",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"age": { "$between": [18, 30] }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "age BETWEEN ? AND ?",
+				FilterArgs: []interface{}{18, 30},
+			},
+		},
+		{
+			name: "nlike operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$nlike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name NOT LIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "isnull operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$isnull": true }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:     25,
+				FilterExp: "name IS NULL",
+			},
+		},
+		{
+			name: "isnotnull operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$isnotnull": true }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:     25,
+				FilterExp: "name IS NOT NULL",
+			},
+		},
+		{
+			name: "combined new operators",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+					Age  int    `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$in": ["foo", "bar"], "$nlike": "%test%" },
+					"age": { "$between": [18, 65], "$isnotnull": true }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "(name IN (?, ?) AND name NOT LIKE ?) AND (age BETWEEN ? AND ? AND age IS NOT NULL)",
+				FilterArgs: []interface{}{"foo", "bar", "%test%", 18, 65},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1034,13 +1167,46 @@ func split(e string) []string {
 	var s []string
 	for len(e) > 0 {
 		if e[0] == '(' {
-			end := strings.LastIndexByte(e, ')') + 1
+			depth, end := 0, 0
+			for i, c := range e {
+				if c == '(' {
+					depth++
+				} else if c == ')' {
+					depth--
+					if depth == 0 {
+						end = i + 1
+						break
+					}
+				}
+			}
 			s = append(s, e[:end])
 			e = e[end:]
 		} else {
-			end := strings.IndexByte(e, '?') + 1
-			s = append(s, e[:end])
-			e = e[end:]
+			andIdx := strings.Index(e, " AND ")
+			orIdx := strings.Index(e, " OR ")
+			qIdx := strings.IndexByte(e, '?')
+			sepIdx := len(e)
+			if andIdx >= 0 && andIdx < sepIdx {
+				sepIdx = andIdx
+			}
+			if orIdx >= 0 && orIdx < sepIdx {
+				sepIdx = orIdx
+			}
+			if qIdx >= 0 && qIdx < sepIdx {
+				end := qIdx + 1
+				rest := e[end:]
+				if strings.HasPrefix(rest, " AND ?") {
+					end += 6
+				}
+				s = append(s, e[:end])
+				e = e[end:]
+			} else if sepIdx < len(e) {
+				s = append(s, e[:sepIdx])
+				e = e[sepIdx:]
+			} else {
+				s = append(s, e)
+				e = ""
+			}
 		}
 		e = strings.TrimPrefix(e, " AND ")
 		e = strings.TrimPrefix(e, " OR ")

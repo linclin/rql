@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/a8m/rql"
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/jinzhu/gorm"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 var (
@@ -63,12 +63,12 @@ func TestMySQL(t *testing.T) {
 func AssertCount(t *testing.T, db *gorm.DB, expected int, query string) {
 	params, err := QueryParser.Parse([]byte(query))
 	must(t, err, "parse query: %s", query)
-	count := 0
-	err = db.Model(User{}).
+	count := int64(0)
+	err = db.Model(&User{}).
 		Where(params.FilterExp, params.FilterArgs...).
 		Count(&count).Error
 	must(t, err, "count users")
-	if count != expected {
+	if int(count) != expected {
 		t.Errorf("AssertCount: %s\n\twant: %d\n\tgot: %d", query, expected, count)
 	}
 }
@@ -77,7 +77,7 @@ func AssertMatchIDs(t *testing.T, db *gorm.DB, expected []int, query string) {
 	params, err := QueryParser.Parse([]byte(query))
 	must(t, err, "parse query: %s", query)
 	var ids []int
-	err = db.Model(User{}).
+	err = db.Model(&User{}).
 		Where(params.FilterExp, params.FilterArgs...).
 		Order(params.Sort).
 		Pluck("id", &ids).Error
@@ -98,7 +98,7 @@ func AssertSelect(t *testing.T, db *gorm.DB, expected []string, query string) {
 	params, err := QueryParser.Parse([]byte(query))
 	must(t, err, "parse query: %s", query)
 	var values []string
-	err = db.Model(User{}).
+	err = db.Model(&User{}).
 		Limit(params.Limit).
 		Select(params.Select).
 		Pluck(params.Select, &values).Error
@@ -120,7 +120,7 @@ func Connect(t *testing.T) *gorm.DB {
 		t.Skip("missing database connection string")
 	}
 	for i := 1; i <= 5; i++ {
-		db, err := gorm.Open("mysql", MySQLConn)
+		db, err := gorm.Open(mysql.Open(MySQLConn), &gorm.Config{})
 		if err == nil {
 			return db
 		}
@@ -131,7 +131,7 @@ func Connect(t *testing.T) *gorm.DB {
 }
 
 func SetUp(t *testing.T, db *gorm.DB) {
-	must(t, db.AutoMigrate(User{}).Error, "migrate db")
+	must(t, db.AutoMigrate(&User{}), "migrate db")
 	var wg sync.WaitGroup
 	wg.Add(100)
 	for i := 1; i <= 100; i++ {
@@ -153,8 +153,11 @@ func SetUp(t *testing.T, db *gorm.DB) {
 }
 
 func Teardown(t *testing.T, db *gorm.DB) {
-	must(t, db.DropTable(User{}).Error, "drop table")
-	must(t, db.Close(), "close conn to mysql")
+	must(t, db.Migrator().DropTable(&User{}), "drop table")
+	sqlDB, _ := db.DB()
+	if sqlDB != nil {
+		sqlDB.Close()
+	}
 }
 
 func must(t *testing.T, err error, msg string, args ...interface{}) {

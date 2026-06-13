@@ -295,47 +295,47 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 	switch typ := indirect(sf.Type); typ.Kind() {
 	case reflect.Bool:
 		f.ValidateFn = validateBool
-		filterOps = append(filterOps, EQ, NEQ)
+		filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
 	case reflect.String:
 		f.ValidateFn = validateString
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, LIKE)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, LIKE, NLIKE, IN, NIN, ISNULL, ISNOTNULL)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		f.ValidateFn = validateInt
 		f.CovertFn = convertInt
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		f.ValidateFn = validateUInt
 		f.CovertFn = convertInt
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Float32, reflect.Float64:
 		f.ValidateFn = validateFloat
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Struct:
 		switch v := reflect.Zero(typ); v.Interface().(type) {
 		case sql.NullBool:
 			f.ValidateFn = validateBool
-			filterOps = append(filterOps, EQ, NEQ)
+			filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
 		case sql.NullString:
 			f.ValidateFn = validateString
-			filterOps = append(filterOps, EQ, NEQ)
+			filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
 		case sql.NullInt64:
 			f.ValidateFn = validateInt
 			f.CovertFn = convertInt
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 		case sql.NullFloat64:
 			f.ValidateFn = validateFloat
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 		case time.Time:
 			f.ValidateFn = validateTime(layout)
 			f.CovertFn = convertTime(layout)
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 		default:
 			if !v.Type().ConvertibleTo(reflect.TypeOf(time.Time{})) {
 				return fmt.Errorf("rql: field type for %q is not supported", sf.Name)
 			}
 			f.ValidateFn = validateTime(layout)
 			f.CovertFn = convertTime(layout)
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
 		}
 	default:
 		return fmt.Errorf("rql: field type for %q is not supported", sf.Name)
@@ -457,9 +457,39 @@ func (p *parseState) field(f *field, v interface{}) {
 			p.WriteString(" AND ")
 		}
 		expect(f.FilterOps[opName], "can not apply op %q on field %q", opName, f.Name)
-		must(f.ValidateFn(opVal), "invalid datatype or format for field %q", f.Name)
-		p.WriteString(p.fmtOp(f.Name, Op(opName[1:])))
-		p.values = append(p.values, f.CovertFn(opVal))
+		op := Op(opName[1:])
+		switch op {
+		case IN, NIN:
+			arr, ok := opVal.([]interface{})
+			expect(ok, "value for %s must be type array", opName)
+			expect(len(arr) > 0, "value for %s must not be empty", opName)
+			p.WriteString(p.colName(f.Name) + " " + op.SQL() + " (")
+			for j, elem := range arr {
+				if j > 0 {
+					p.WriteString(", ")
+				}
+				must(f.ValidateFn(elem), "invalid datatype in array for field %q", f.Name)
+				p.WriteString("?")
+				p.values = append(p.values, f.CovertFn(elem))
+			}
+			p.WriteByte(')')
+		case BETWEEN:
+			arr, ok := opVal.([]interface{})
+			expect(ok, "value for $between must be type array")
+			expect(len(arr) == 2, "value for $between must contain exactly 2 elements")
+			must(f.ValidateFn(arr[0]), "invalid datatype in $between for field %q", f.Name)
+			must(f.ValidateFn(arr[1]), "invalid datatype in $between for field %q", f.Name)
+			p.WriteString(p.colName(f.Name) + " BETWEEN ? AND ?")
+			p.values = append(p.values, f.CovertFn(arr[0]), f.CovertFn(arr[1]))
+		case ISNULL:
+			p.WriteString(p.colName(f.Name) + " IS NULL")
+		case ISNOTNULL:
+			p.WriteString(p.colName(f.Name) + " IS NOT NULL")
+		default:
+			must(f.ValidateFn(opVal), "invalid datatype or format for field %q", f.Name)
+			p.WriteString(p.fmtOp(f.Name, op))
+			p.values = append(p.values, f.CovertFn(opVal))
+		}
 		i++
 	}
 	if len(terms) > 1 {

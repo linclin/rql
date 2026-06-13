@@ -4,14 +4,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/a8m/rql"
-	"github.com/jinzhu/gorm"
-	_ "github.com/jinzhu/gorm/dialects/sqlite"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 var (
@@ -36,10 +35,11 @@ type User struct {
 
 func main() {
 	var err error
-	db, err = gorm.Open("sqlite3", "test.db")
+	db, err = gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
 	must(err, "initialize db")
-	defer db.Close()
-	must(db.AutoMigrate(User{}).Error, "run migration")
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+	must(db.AutoMigrate(&User{}), "run migration")
 	must(db.Create(&User{Name: "test"}).Error, "create test user")
 	http.HandleFunc("/users", GetUsers)
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -82,7 +82,7 @@ func getDBQuery(r *http.Request) (*rql.Params, error) {
 	if v := r.URL.Query().Get(queryParam); v != "" {
 		b, err = base64.StdEncoding.DecodeString(v)
 	} else {
-		b, err = ioutil.ReadAll(io.LimitReader(r.Body, 1<<12))
+		b, err = io.ReadAll(io.LimitReader(r.Body, 1<<12))
 	}
 	if err != nil {
 		return nil, err
