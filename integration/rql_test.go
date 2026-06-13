@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a8m/rql"
+	"github.com/linclin/rql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/a8m/rql"
+	"github.com/linclin/rql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

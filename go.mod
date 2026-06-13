@@ -1,4 +1,4 @@
-module github.com/a8m/rql
+module github.com/linclin/rql
 
 go 1.23
 
