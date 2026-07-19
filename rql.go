@@ -56,6 +56,30 @@ type Query struct {
 	//	}`))
 	//
 	Filter map[string]interface{} `json:"filter,omitempty"`
+	// Group contains the list of fields for the `GROUP BY` clause. Each name must
+	// be a registered, filterable field. Example:
+	//
+	//	params, err := p.Parse([]byte(`{
+	//		"group": ["city", "country"]
+	//	}`))
+	//
+	// Emits `GROUP BY city, country`.
+	Group []string `json:"group,omitempty"`
+	// Having is a query object for building the `HAVING` clause. It uses the same
+	// operator syntax as Filter, but the referenced fields should be aggregate
+	// expressions written via the `column=` tag option on dedicated fields
+	// (e.g. `Count int \`rql:"filter,column=COUNT(*)"\``).
+	//
+	// Example:
+	//
+	//	params, err := p.Parse([]byte(`{
+	//		"having": { "count": { "$gt": 10 } }
+	//	}`))
+	//
+	Having map[string]interface{} `json:"having,omitempty"`
+	// Distinct, when true, emits `SELECT DISTINCT` instead of `SELECT`.
+	// It is ignored if `Select` is empty.
+	Distinct bool `json:"distinct,omitempty"`
 }
 
 // Params is the parser output after calling to `Parse`. You should pass its
@@ -81,6 +105,8 @@ type Params struct {
 	Offset int
 	// Select contains the expression for the `SELECT` clause defined in the Query.
 	Select string
+	// Distinct, when true, indicates the caller should emit `SELECT DISTINCT`.
+	Distinct bool
 	// Sort used as a parameter for the `ORDER BY` clause. For example, "age desc, name".
 	Sort string
 	// FilterExp and FilterArgs come together and used as a parameters for the `WHERE` clause.
@@ -93,6 +119,13 @@ type Params struct {
 	// 	   Args: "a8m", 22
 	FilterExp  string
 	FilterArgs []interface{}
+	// GroupExp contains the comma-separated field list for the `GROUP BY` clause.
+	// Empty string means no grouping. Example: "city, country".
+	GroupExp string
+	// HavingExp and HavingArgs come together and are used as parameters for the `HAVING` clause.
+	// They follow the same structure as FilterExp/FilterArgs.
+	HavingExp  string
+	HavingArgs []interface{}
 }
 
 // ParseError is type of error returned when there is a parsing problem.
@@ -196,8 +229,33 @@ func (p *Parser) ParseQuery(q *Query) (pr *Params, err error) {
 		expect(p.fields[s] != nil, "unrecognized selection key %q", s)
 	}
 	pr.Select = strings.Join(q.Select, ", ")
+	pr.Distinct = q.Distinct
+	pr.GroupExp = p.groupBy(q.Group)
+	if q.Having != nil {
+		hs := p.newParseState()
+		hs.and(q.Having)
+		pr.HavingExp = hs.String()
+		pr.HavingArgs = hs.values
+		// Note: hs is not returned to the pool because HAVING is expected to be rare;
+		// the parseState is cheap to allocate. Returning it here would risk
+		// cross-clause state contamination if ParseQuery is ever restructured.
+	}
 	parseStatePool.Put(ps)
 	return
+}
+
+// groupBy validates and builds the `GROUP BY` clause expression. Each name must
+// be a registered field. Returns an empty string if no grouping is requested.
+func (p *Parser) groupBy(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	cols := make([]string, 0, len(fields))
+	for _, f := range fields {
+		expect(p.fields[f] != nil, "unrecognized group key %q", f)
+		cols = append(cols, p.colName(f))
+	}
+	return strings.Join(cols, ", ")
 }
 
 // Column is the default function that converts field name into a database column.
@@ -317,7 +375,7 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 			filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
 		case sql.NullString:
 			f.ValidateFn = validateString
-			filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, LIKE, NLIKE, ILIKE, NILIKE, REGEX, IN, NIN, ISNULL, ISNOTNULL)
 		case sql.NullInt64:
 			f.ValidateFn = validateInt
 			f.CovertFn = convertInt
@@ -412,10 +470,12 @@ func (p *parseState) and(f map[string]interface{}) {
 		case k == p.op(NOR):
 			terms, ok := v.([]interface{})
 			expect(ok, "$nor must be type array")
+			expect(len(terms) > 0, "$nor must contain at least one condition")
 			p.relOp(NOR, terms)
 		case k == p.op(NOT):
 			term, ok := v.(map[string]interface{})
 			expect(ok, "$not must be type object")
+			expect(len(term) > 0, "$not must contain at least one condition")
 			p.notOp(term)
 		case p.fields[k] != nil:
 			expect(p.fields[k].Filterable, "field %q is not filterable", k)
@@ -509,6 +569,9 @@ func (p *parseState) field(f *field, v interface{}) {
 			p.WriteString(p.colName(f.Name) + " IS NULL")
 		case ISNOTNULL:
 			p.WriteString(p.colName(f.Name) + " IS NOT NULL")
+		case ILIKE, NILIKE, REGEX:
+			must(f.ValidateFn(opVal), "invalid datatype or format for field %q", f.Name)
+			p.writeDialectOp(f, op, opVal)
 		default:
 			must(f.ValidateFn(opVal), "invalid datatype or format for field %q", f.Name)
 			p.WriteString(p.fmtOp(f.Name, op))
@@ -526,6 +589,33 @@ func (p *parseState) field(f *field, v interface{}) {
 func (p *Parser) fmtOp(field string, op Op) string {
 	colName := p.colName(field)
 	return colName + " " + op.SQL() + " ?"
+}
+
+// writeDialectOp emits the SQL fragment and appends the value for dialect-specific
+// operators (ILIKE/NILIKE/REGEX). The exact SQL depends on the configured Dialect:
+//   - PostgreSQL: `col ILIKE ?`, `col NOT ILIKE ?`, `col ~ ?`
+//   - MySQL/SQLite: `LOWER(col) LIKE LOWER(?)`, `LOWER(col) NOT LIKE LOWER(?)`, `col REGEXP ?`
+//   - No dialect: emit raw `col ILIKE ?` / `col NOT ILIKE ?` / `col REGEXP ?`
+//
+// The wrapped value is appended to p.values after the SQL fragment is written.
+func (p *parseState) writeDialectOp(f *field, op Op, v interface{}) {
+	colName := p.colName(f.Name)
+	sqlOp, wrap := dialectOpFormat(p.Dialect, op)
+	if wrap {
+		// LOWER(col) OP LOWER(?)
+		p.WriteString("LOWER(")
+		p.WriteString(colName)
+		p.WriteString(") ")
+		p.WriteString(sqlOp)
+		p.WriteString(" LOWER(?)")
+	} else {
+		// col OP ?
+		p.WriteString(colName)
+		p.WriteString(" ")
+		p.WriteString(sqlOp)
+		p.WriteString(" ?")
+	}
+	p.values = append(p.values, f.CovertFn(v))
 }
 
 // colName formats the query field to database column name in cases the user configured a custom

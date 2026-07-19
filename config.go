@@ -2,6 +2,7 @@ package rql
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"reflect"
 )
@@ -49,14 +50,6 @@ var specialOps = map[Op]bool{
 	ISNOTNULL: true,
 }
 
-// Logical operators that wrap a sub-condition or a list of sub-conditions.
-var logicalOps = map[Op]bool{
-	OR:  true,
-	AND: true,
-	NOR: true,
-	NOT: true,
-}
-
 // Default values for configuration.
 const (
 	DefaultTagName  = "rql"
@@ -67,6 +60,51 @@ const (
 	Offset          = "offset"
 	Limit           = "limit"
 )
+
+// Database dialects supported by rql. The dialect controls which operators are
+// registered for each field type and how dialect-specific operators
+// (ILIKE/NILIKE/REGEX) are translated to SQL.
+const (
+	// DialectMySQL targets MySQL. ILIKE/NILIKE are translated to
+	// `LOWER(col) LIKE LOWER(?)` / `LOWER(col) NOT LIKE LOWER(?)`.
+	// REGEX uses the `REGEXP` keyword.
+	DialectMySQL = "mysql"
+	// DialectPostgreSQL targets PostgreSQL. ILIKE/NILIKE are emitted natively.
+	// REGEX is translated to the `~` operator.
+	DialectPostgreSQL = "postgres"
+	// DialectSQLite targets SQLite. Same as MySQL for ILIKE/NILIKE/REGEX,
+	// but REGEX requires the `regexp` extension to be loaded.
+	DialectSQLite = "sqlite"
+)
+
+// dialectOpFormat returns the dialect-specific SQL keyword and whether the column/value
+// need to be wrapped in LOWER(...) for case-insensitive matching.
+//
+//   - PostgreSQL + ILIKE/NILIKE: emit `ILIKE`/`NOT ILIKE` natively (no wrapping)
+//   - PostgreSQL + REGEX:        emit `~`
+//   - MySQL/SQLite + ILIKE/NILIKE: wrap with LOWER(...) and use `LIKE`/`NOT LIKE`
+//   - MySQL/SQLite + REGEX:        emit `REGEXP`
+//   - Empty dialect:               fall back to opFormat (raw ILIKE/REGEXP),
+//     letting the underlying database reject it if unsupported.
+func dialectOpFormat(dialect string, op Op) (sql string, wrap bool) {
+	switch op {
+	case ILIKE, NILIKE:
+		switch dialect {
+		case DialectPostgreSQL:
+			return opFormat[op], false
+		case DialectMySQL, DialectSQLite:
+			if op == ILIKE {
+				return "LIKE", true
+			}
+			return "NOT LIKE", true
+		}
+	case REGEX:
+		if dialect == DialectPostgreSQL {
+			return "~", false
+		}
+	}
+	return opFormat[op], false
+}
 
 var (
 
@@ -178,6 +216,13 @@ type Config struct {
 	// DefaultSort is the default value for the 'Sort' field that returns when no sort expression is supplied by the caller.
 	// It defaults to an empty string slice.
 	DefaultSort []string
+	// Dialect controls how dialect-specific operators (ILIKE/NILIKE/REGEX) are
+	// translated to SQL. Supported values: DialectMySQL, DialectPostgreSQL,
+	// DialectSQLite. When empty, rql emits the raw SQL keyword (ILIKE/REGEXP)
+	// and lets the underlying database reject it if unsupported.
+	//
+	// Recommended: set it explicitly to match your production database.
+	Dialect string
 }
 
 // defaults sets the default configuration of Config.
@@ -187,6 +232,10 @@ func (c *Config) defaults() error {
 	}
 	if indirect(reflect.TypeOf(c.Model)).Kind() != reflect.Struct {
 		return errors.New("rql: 'Model' must be a struct type")
+	}
+	if c.Dialect != "" && !isValidDialect(c.Dialect) {
+		return fmt.Errorf("rql: unsupported 'Dialect' %q (supported: %s, %s, %s)",
+			c.Dialect, DialectMySQL, DialectPostgreSQL, DialectSQLite)
 	}
 	if c.Log == nil {
 		c.Log = log.Printf
@@ -200,6 +249,10 @@ func (c *Config) defaults() error {
 	defaultInt(&c.DefaultLimit, DefaultLimit)
 	defaultInt(&c.LimitMaxValue, DefaultMaxLimit)
 	return nil
+}
+
+func isValidDialect(d string) bool {
+	return d == DialectMySQL || d == DialectPostgreSQL || d == DialectSQLite
 }
 
 func defaultString(s *string, v string) {

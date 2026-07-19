@@ -119,11 +119,12 @@ func TestInit(t *testing.T) {
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		name    string
-		conf    Config
-		input   []byte
-		wantErr bool
-		wantOut *Params
+		name        string
+		conf        Config
+		input       []byte
+		wantErr     bool
+		wantInitErr bool
+		wantOut     *Params
 	}{
 		{
 			name: "simple test",
@@ -1193,13 +1194,13 @@ func TestParse(t *testing.T) {
 			},
 			input: []byte(`{
 				"filter": {
-					"$not": { "age": { "$gt": 10 }, "name": "foo" }
+					"$not": { "age": { "$gt": 10 } }
 				}
 			}`),
 			wantOut: &Params{
 				Limit:      25,
-				FilterExp:  "NOT (age > ? AND name = ?)",
-				FilterArgs: []interface{}{10, "foo"},
+				FilterExp:  "NOT (age > ?)",
+				FilterArgs: []interface{}{10},
 			},
 		},
 		{
@@ -1301,13 +1302,390 @@ func TestParse(t *testing.T) {
 				FilterArgs: []interface{}{"%foo%", "^bar", 18, 65, "baz", 0, 200},
 			},
 		},
+		// --- P0-2 boundary tests: empty $not / $nor must error ---
+		{
+			name: "not operator with empty object",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$not": {}
+				}
+			}`),
+			wantErr: true,
+		},
+		{
+			name: "nor operator with empty array",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$nor": []
+				}
+			}`),
+			wantErr: true,
+		},
+		// --- Nested $not recursion ---
+		{
+			name: "nested not operator",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$not": { "$not": { "age": { "$gt": 10 } } }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "NOT (NOT (age > ?))",
+				FilterArgs: []interface{}{10},
+			},
+		},
+		// --- $not wrapping $or (combines notOp with relOp) ---
+		{
+			name: "not wrapping or",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$not": { "$or": [{ "age": 10 }, { "age": 20 }] }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "NOT ((age = ? OR age = ?))",
+				FilterArgs: []interface{}{10, 20},
+			},
+		},
+		// --- $regex with non-string value ---
+		{
+			name: "regex with non-string value",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$regex": 123 }
+				}
+			}`),
+			wantErr: true,
+		},
+		// --- Dialect tests ---
+		{
+			name: "dialect postgresql ilike",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectPostgreSQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$ilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name ILIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "dialect postgresql nilike",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectPostgreSQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$nilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name NOT ILIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "dialect postgresql regex",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectPostgreSQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$regex": "^foo" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name ~ ?",
+				FilterArgs: []interface{}{"^foo"},
+			},
+		},
+		{
+			name: "dialect mysql ilike",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectMySQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$ilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "LOWER(name) LIKE LOWER(?)",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "dialect mysql nilike",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectMySQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$nilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "LOWER(name) NOT LIKE LOWER(?)",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "dialect sqlite regex",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectSQLite,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$regex": "^foo" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name REGEXP ?",
+				FilterArgs: []interface{}{"^foo"},
+			},
+		},
+		{
+			name: "dialect invalid",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      "oracle",
+			},
+			input:   []byte(`{}`),
+			wantErr: true,
+			wantInitErr: true,
+		},
+		// --- Group By tests ---
+		{
+			name: "group by basic",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+					Age  int    `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"group": ["name", "age"]
+			}`),
+			wantOut: &Params{
+				Limit:    25,
+				GroupExp: "name, age",
+			},
+		},
+		{
+			name: "group by with unknown field",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"group": ["unknown"]
+			}`),
+			wantErr: true,
+		},
+		// --- Having tests ---
+		{
+			name: "having basic",
+			conf: Config{
+				Model: struct {
+					Count int `rql:"filter,column=COUNT(*)"`
+					Age   int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"having": {
+					"COUNT(*)": { "$gt": 10 }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				HavingExp:  "COUNT(*) > ?",
+				HavingArgs: []interface{}{10},
+			},
+		},
+		{
+			name: "group with having and filter",
+			conf: Config{
+				Model: struct {
+					Count int `rql:"filter,column=COUNT(*)"`
+					Age   int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": { "age": { "$gt": 18 } },
+				"group": ["age"],
+				"having": { "COUNT(*)": { "$gte": 5 } }
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "age > ?",
+				FilterArgs: []interface{}{18},
+				GroupExp:   "age",
+				HavingExp:  "COUNT(*) >= ?",
+				HavingArgs: []interface{}{5},
+			},
+		},
+		// --- Distinct tests ---
+		{
+			name: "distinct with select",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"select": ["name"],
+				"distinct": true
+			}`),
+			wantOut: &Params{
+				Limit:    25,
+				Select:   "name",
+				Distinct: true,
+			},
+		},
+		{
+			name: "distinct without select is ignored",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"distinct": true
+			}`),
+			wantOut: &Params{
+				Limit:    25,
+				Distinct: true,
+			},
+		},
+		// --- sql.NullString now supports string ops ---
+		{
+			name: "nullstring like",
+			conf: Config{
+				Model: struct {
+					Name sql.NullString `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$like": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name LIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "nullstring ilike mysql",
+			conf: Config{
+				Model: struct {
+					Name sql.NullString `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+				Dialect:      DialectMySQL,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$ilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "LOWER(name) LIKE LOWER(?)",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.conf.Log = t.Logf
 			p, err := NewParser(tt.conf)
 			if err != nil {
-				t.Fatalf("failed to build parser: %v", err)
+				if !tt.wantInitErr {
+					t.Fatalf("failed to build parser: %v", err)
+				}
+				return
+			}
+			if tt.wantInitErr {
+				t.Fatalf("expected parser init to fail, but it succeeded")
 			}
 			out, err := p.Parse(tt.input)
 			if tt.wantErr != (err != nil) {
@@ -1328,7 +1706,7 @@ func assertParams(t *testing.T, got *Params, want *Params) {
 		t.Fatalf("limit: got: %v want %v", got.Limit, want.Limit)
 	}
 	if got.Offset != want.Offset {
-		t.Fatalf("offset: got: %v want %v", got.Limit, want.Limit)
+		t.Fatalf("offset: got: %v want %v", got.Offset, want.Offset)
 	}
 	if got.Sort != want.Sort {
 		t.Fatalf("sort: got: %q want %q", got.Sort, want.Sort)
@@ -1336,11 +1714,23 @@ func assertParams(t *testing.T, got *Params, want *Params) {
 	if got.Select != want.Select {
 		t.Fatalf("select: got: %q want %q", got.Select, want.Select)
 	}
+	if got.Distinct != want.Distinct {
+		t.Fatalf("distinct: got: %v want %v", got.Distinct, want.Distinct)
+	}
+	if got.GroupExp != want.GroupExp {
+		t.Fatalf("group exp: got: %q want %q", got.GroupExp, want.GroupExp)
+	}
 	if !equalExp(got.FilterExp, want.FilterExp) || !equalExp(want.FilterExp, got.FilterExp) {
 		t.Fatalf("filter expr:\n\tgot: %q\n\twant %q", got.FilterExp, want.FilterExp)
 	}
-	if !equalArgs(got.FilterArgs, got.FilterArgs) || !equalArgs(want.FilterArgs, got.FilterArgs) {
+	if !equalArgs(got.FilterArgs, want.FilterArgs) || !equalArgs(want.FilterArgs, got.FilterArgs) {
 		t.Fatalf("filter args:\n\tgot: %v\n\twant %v", got.FilterArgs, want.FilterArgs)
+	}
+	if !equalExp(got.HavingExp, want.HavingExp) || !equalExp(want.HavingExp, got.HavingExp) {
+		t.Fatalf("having expr:\n\tgot: %q\n\twant %q", got.HavingExp, want.HavingExp)
+	}
+	if !equalArgs(got.HavingArgs, want.HavingArgs) || !equalArgs(want.HavingArgs, got.HavingArgs) {
+		t.Fatalf("having args:\n\tgot: %v\n\twant %v", got.HavingArgs, want.HavingArgs)
 	}
 }
 

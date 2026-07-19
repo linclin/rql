@@ -12,44 +12,45 @@
 	</a>
 </p>
 
-RQL is a resource query language for REST. It provides a simple and light-weight API for adding dynamic querying capabilities to web-applications that use SQL-based database. It functions as the connector between the HTTP handler and the DB engine, and manages all validations and translations for user inputs.
+RQL 是一个面向 REST 的资源查询语言。它为基于 SQL 数据库的 Web 应用提供了一套简单轻量的 API，用于添加动态查询能力。它充当 HTTP handler 与数据库引擎之间的连接器，统一处理用户输入的校验与翻译。
 
 <p align="center">
   <img src="assets/diagram.png" alt="rql diagram">
 </p>
 
-## Motivation
-In the last several years I have found myself working on different web applications in Go, some of them were small and some of them were big with a lot of entities and relations. In all cases I never found a simple and standard API to query my resources.
+## 动机
 
-What do I mean by query? Let's say our application has a table of `orders`, and we want our users to be able to search and __filter by dynamic parameters__. For example: _select all orders from today with price greater than 100_.  
-In order to achieve that I used to pass these parameters in the query string like this: `created_at_gt=X&price_gt=100`.  
-But sometimes it became complicated when I needed to apply a disjunction between two conditions. For example, when I wanted to _select all orders that canceled or created last week and still didn't ship_. And in SQL syntax:
+过去几年里，我在 Go 中开发过各种各样的 Web 应用，有的体量很小，有的有大量实体和复杂关系。但无论哪种情况，我都没能找到一个简单且标准的 API 来查询资源。
+
+什么叫查询？假设我们的应用有一张 `orders` 表，我们希望用户能够按动态参数搜索和 __过滤__。例如：_查询今天所有价格大于 100 的订单_。
+为此我曾把参数放在 query string 里传递，像这样：`created_at_gt=X&price_gt=100`。
+但当我需要在两个条件之间做"或"运算时就会变得很复杂。比如 _查询所有已取消、或上周创建但还未发货的订单_，对应的 SQL 是：
 ```sql
 SELECT * FROM ORDER WHERE canceled = 1 OR (created_at < X AND created_at > Y AND shipped = 0)
-```  
-I was familiar with the MongoDB syntax and I felt that it was simple and robust enough to achieve my goals, and decided to use it as the query language for this project. I wanted it to be project agnostic in the sense of not relying on anything that related to some specific application or resource. Therefore, in order to embed rql in a new project, a user just needs to import the package and add the desired tags to his struct definition. Follow the [Getting Started](#Getting_Started) section to learn more.
+```
+我对 MongoDB 的查询语法比较熟悉，觉得它简单且足够稳健，能满足我的需求，于是决定把它作为本项目的查询语言。我希望这个项目与具体业务无关——不依赖任何特定的应用或资源。因此，要将 rql 集成到新项目，只需 import 这个包，并在自己的 struct 定义中加上所需 tag 即可。详见 [快速开始](#快速开始) 一节。
 
-## Getting Started
-rql uses a subset of MongoDB query syntax. If you are familiar with the MongoDB syntax, it will be easy for you to start. Although, it's pretty simple and easy to learn.    
-In order to embed rql you simply need to add the tags you want (`filter` or `sort`) to your struct definition, and rql will manage all validations for you and return an informative error for the end user if the query doesn't follow the schema.
-Here's a short example of how to start using rql quickly, or you can go to [API](#API) for more expanded documentation.
+## 快速开始
+
+rql 使用 MongoDB 查询语法的一个子集。如果你熟悉 MongoDB 语法，上手会非常容易；即便不熟悉，它也足够简单。
+要嵌入 rql，只需在你 struct 定义中加上需要的 tag（`filter` 或 `sort`），rql 会自动完成所有校验，并在查询不符合 schema 时返回清晰的错误信息给终端用户。
+下面是一个快速上手的示例，更完整的文档请看 [API](#api) 一节。
 ```go
-// An example of an HTTP handler that uses gorm, and accepts user query in either the body
-// or the URL query string.
+// 一个使用 gorm 的 HTTP handler 示例，支持从 body 或 URL query string 接收用户查询。
 package main
 
 var (
 	db *gorm.DB
-	// QueryParam is the name of the query string key.
+	// QueryParam 是 query string 中的 key 名称。
 	QueryParam = "query"
-	// MustNewParser panics if the configuration is invalid.
+	// MustNewParser 在配置非法时会 panic。
 	QueryParser = rql.MustNewParser(rql.Config{
 		Model:    User{},
 		FieldSep: ".",
 	})
 )
 
-// User is the model in gorm's terminology.
+// User 是 gorm 中的 model 定义。
 type User struct {
 	ID          uint      `gorm:"primary_key" rql:"filter,sort"`
 	Admin       bool      `rql:"filter"`
@@ -59,7 +60,7 @@ type User struct {
 }
 
 
-// GetUsers is an http.Handler that accepts a db query in either the body or the query string.
+// GetUsers 是一个 http.Handler，从 body 或 query string 接收 db 查询。
 func GetUsers(w http.ResponseWriter, r *http.Request) {
 	var users []User
 	p, err := getDBQuery(r)
@@ -84,8 +85,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 }
 
-// getDBQuery extract the query blob from either the body or the query string
-// and execute the parser.
+// getDBQuery 从 body 或 query string 中提取查询 JSON，并交给 parser 解析。
 func getDBQuery(r *http.Request) (*rql.Params, error) {
 	var (
 		b   []byte
@@ -102,140 +102,147 @@ func getDBQuery(r *http.Request) (*rql.Params, error) {
 	return QueryParser.Parse(b)
 }
 ```
-Go to [examples/simple](examples/simple.go) to see the full working example.
+完整可运行示例见 [examples/simple](examples/simple.go)。
 
 
 ## API
-In order to start using rql, you need to configure your parser. Let's go over a basic example of how to do this. For more details and updated documentation, please checkout the [godoc](https://godoc.org/github.com/a8m/rql/#Config).  
-There are two options to build a parser, `rql.New(rql.Config)`, and `rql.MustNew(rql.Config)`. The only difference between the two is that `rql.New` returns an error if the configuration is invalid, and `rql.MustNew` panics.
+
+使用 rql 前，需要先配置 parser。我们来看一个基础示例。更详细的最新文档请查阅 [godoc](https://godoc.org/github.com/a8m/rql/#Config)。
+构建 parser 有两种方式：`rql.New(rql.Config)` 和 `rql.MustNew(rql.Config)`。两者唯一差别是：`rql.New` 在配置非法时返回 error，而 `rql.MustNew` 会 panic。
 ```go
-// we use rql.MustPanic because we don't want to deal with error handling in top level declarations.
+// 使用 rql.MustPanic 是因为顶层声明中不希望处理 error。
 var Parser = rql.MustNew(rql.Config{
-	// User if the resource we want to query.
+	// User 是我们要查询的资源。
 	Model: User{},
-	// ColumnFn translates struct field names to database column names.
-	// The default rql.Column function converts CamelCase to snake_case.
-	// For gorm v2, this default works out of the box.
-	// ColumnFn: gorm.ToDBName,  // gorm v1 (deprecated)
-	// Use your own custom logger. This logger is used only in the building stage.
+	// ColumnFn 将 struct 字段名翻译为数据库列名。
+	// 默认的 rql.Column 函数会把 CamelCase 转换为 snake_case。
+	// 对于 gorm v2，默认函数即可直接使用。
+	// ColumnFn: gorm.ToDBName,  // gorm v1（已弃用）
+	// 使用自定义 logger。该 logger 仅在构建阶段使用。
 	Log: logrus.Printf,
-	// Default limit returned by the `Parse` function if no limit provided by the user.
+	// 当用户未提供 limit 时，Parse 返回的默认 limit。
 	DefaultLimit: 100,
-	// Accept only requests that pass limit value that is greater than or equal to 200.
+	// 只接受 limit 值大于等于 200 的请求。
 	LimitMaxValue: 200,
 })
 ```
-rql uses reflection in the build process to detect the type of each field, and create a set of validation rules for each one. If one of the validation rules fails or rql encounters an unknown field, it returns an informative error to the user. Don't worry about the usage of reflection, it happens only once when you build the parser.
-Let's go over the validation rules:
-1. `int` (8,16,32,64), `sql.NullInt6` - Round number
-2. `uint` (8,16,32,64), `uintptr` - Round number and greater than or equal to 0
-3. `float` (32,64), sql.NullFloat64: - Number
-4. `bool`, `sql.NullBool` - Boolean
-5. `string`, `sql.NullString` - String
-6. `time.Time`, and other types that convertible to `time.Time` - The default layout is time.RFC3339 format (JS format), and parsable to `time.Time`.
-   It's possible to override the `time.Time` layout format with custom one. You can either use one of the standard layouts in the `time` package, or use a custom one. For example:
+rql 在构建阶段通过反射检测每个字段的类型，并为每个字段生成一组校验规则。如果某条规则校验失败，或 rql 遇到未知字段，会返回一个清晰的错误给用户。反射只在构建 parser 时执行一次，运行时无反射开销。
+下面是校验规则列表：
+1. `int`（8/16/32/64）、`sql.NullInt64` - 整数
+2. `uint`（8/16/32/64）、`uintptr` - 整数且大于等于 0
+3. `float`（32/64）、`sql.NullFloat64` - 数字
+4. `bool`、`sql.NullBool` - 布尔值
+5. `string`、`sql.NullString` - 字符串
+6. `time.Time` 及其他可转换为 `time.Time` 的类型 - 默认使用 `time.RFC3339`（JS 格式），需要可被 `time.Parse` 解析。
+   可以通过 tag 覆盖 `time.Time` 的 layout 格式。既可以用 `time` 包中的标准 layout，也可以自定义。例如：
    ```go
    type User struct {
 		T1 time.Time `rql:"filter"`                         // time.RFC3339
 		T2 time.Time `rql:"filter,layout=UnixDate"`         // time.UnixDate
-		T3 time.Time `rql:"filter,layout=2006-01-02 15:04"` // 2006-01-02 15:04 (custom)
+		T3 time.Time `rql:"filter,layout=2006-01-02 15:04"` // 2006-01-02 15:04（自定义）
    }
-   ```  
+   ```
 
-Note that all rules are applied to pointers as well. It means, if you have a field `Name *string` in your struct, we still use the string validation rule for it.
+注意：所有规则对指针类型同样适用。也就是说，如果你的字段是 `Name *string`，rql 仍会使用字符串校验规则。
 
-### User API
-We consider developers as the users of this API (usually FE developers). Let's go over the JSON API we export for resources.  
-The top-level query accepts JSON with 4 fields: `offset`, `limit`, `filter` and `sort`. All of them are optional.
+### 用户 API
 
-#### `offset` and `limit`
-These two fields are useful for paging and they are equivalent to `OFFSET` and `LIMIT` in a standard SQL syntax.
-- `offset` must be greater than or equal to 0 and its default value is 0
-- `limit` must be greater than 0 and less than or equal to the configured `LimitMaxValue`.
-   The default value for `LimitMaxValue` is 100
+我们将开发者（通常是前端开发）视为本 API 的用户。下面介绍我们对外暴露的 JSON API。
+顶层查询 JSON 接受 4 个字段：`offset`、`limit`、`filter`、`sort`，全部可选。
+
+#### `offset` 和 `limit`
+
+这两个字段用于分页，等价于标准 SQL 中的 `OFFSET` 和 `LIMIT`。
+- `offset` 必须大于等于 0，默认为 0
+- `limit` 必须大于 0 且小于等于配置项 `LimitMaxValue`。
+   `LimitMaxValue` 默认值为 100
 
 #### `sort`
-Sort accepts a slice of strings (`[]string`) that is translated to the SQL `ORDER BY` clause. The given slice must contain only columns that are sortable (have tag `rql:"sort"`). The default order for column is ascending order in SQL, but you can control it with an optional prefix: `+` or `-`. `+` means ascending order, and `-` means descending order. Let's see a short example:
+
+`sort` 接受字符串数组（`[]string`），翻译为 SQL 的 `ORDER BY` 子句。数组中每项必须是可排序字段（即 struct tag 中带 `rql:"sort"`）。SQL 默认是升序，但可以通过可选前缀 `+` 或 `-` 控制：`+` 表示升序，`-` 表示降序。看个简短示例：
 ```
-For input - ["address.name", "-address.zip.code", "+age"]
-Result is - address_name, address_zip_code DESC, age ASC
+输入 - ["address.name", "-address.zip.code", "+age"]
+结果 - address_name, address_zip_code DESC, age ASC
 ```
 
 #### `select`
-Select accepts a slice of strings (`[]string`) that is joined with comma (",") to the SQL `SELECT` clause.
+
+`select` 接受字符串数组（`[]string`），以逗号（","）拼接成 SQL `SELECT` 子句。
 ```
-For input - ["name", "age"]
-Result is - "name, age"
+输入 - ["name", "age"]
+结果 - "name, age"
 ```
 
 #### `filter`
-Filter is the one who is translated to the SQL `WHERE` clause. This object that contains `filterable` fields or the disjunction (`$or`) operator. Each field in the object represents a condition in the `WHERE` clause. It contains a specific value that matched the type of the field or an object of predicates. Let's go over them:
-- Field follows the format: `field: <value>`, means the predicate that will be used is `=`. For example:
+
+`filter` 会被翻译为 SQL 的 `WHERE` 子句。它是一个对象，包含可过滤字段或 `$or` 操作符。对象中每个字段对应 `WHERE` 子句中的一个条件，可以是与字段类型匹配的值，也可以是一个操作符对象。下面分别说明：
+- 字段格式 `field: <value>`，表示使用 `=` 谓词。例如：
   ```
-  For input:
+  输入：
   {
     "admin": true
   }
-  
-  Result is: admin = ?
+
+  结果：admin = ?
   ```
-  You can see that RQL uses placeholders in the generated `WHERE` statement. Follow the [examples](#examples) section
-  to see how to use it properly. 
-- If the field follows the format: `field: { <predicate>: <value>, ...}`, For example:
+  可以看到，RQL 在生成的 `WHERE` 中使用了占位符。具体使用方式见 [示例](#示例) 一节。
+- 字段格式 `field: { <predicate>: <value>, ...}`，例如：
   ```
-  For input:
+  输入：
   {
     "age": {
       "$gt": 20,
       "$lt": 30
     }
   }
-  
-  Result is: age > ? AND age < ?
+
+  结果：age > ? AND age < ?
   ```
-  It means that the logical `AND` operator used between the two predicates.
-  Scroll below to see the full list of the supported predicates.
-- `$or` is a field that represents the logical `OR` operator, and can be in any level of the query. Its type need to be an
-  array of condition objects and the result of it is the disjunction between them. For example:
+  两个谓词之间会使用逻辑 `AND`。
+  完整的谓词列表见下文。
+- `$or` 是表示逻辑 `OR` 的字段，可以出现在查询的任意层级。它的值必须是条件对象数组，结果是这些对象的"或"运算。例如：
   ```
-  For input:
+  输入：
   {
     "$or": [
       { "city": "TLV" },
       { "zip": { "$gte": 49800, "$lte": 57080 } }
     ]
   }
-  
-  Result is: city = ? OR (zip >= ? AND zip <= ?)
-  ```
-To simplify that, the rule is `AND` for objects and `OR` for arrays. Let's go over the list of supported predicates and then we'll show a few examples.
 
-##### Predicates
-- `$eq` and `$neq` - can be used on all types
-- `$gt`, `$lt`, `$gte` and `$lte` - can be used on numbers, strings, and timestamp
-- `$like` and `$nlike` - can be used only on type string
-- `$ilike` and `$nilike` - case-insensitive `LIKE`/`NOT LIKE`. Only PostgreSQL supports these natively;
-  on MySQL/SQLite use `LOWER(col) LIKE LOWER(?)` via a custom column name or wrap the value yourself.
-- `$regex` - regex matching via the SQL `REGEXP` operator. Supported by MySQL and PostgreSQL;
-  SQLite needs the `regexp` extension. Only applicable to string fields.
-- `$in` and `$nin` - `IN` / `NOT IN` list of values, can be used on all types
-- `$between` and `$nbetween` - `BETWEEN` / `NOT BETWEEN` a pair of bounds, can be used on numbers and timestamps
-- `$isnull` and `$isnotnull` - `IS NULL` / `IS NOT NULL`, can be used on all types. The value is ignored
-  (e.g. `{"name": {"$isnull": true}}`).
-- `$not` - negates a sub-condition object. Wraps the inner condition with `NOT (...)`.
-  For example:
+  结果：city = ? OR (zip >= ? AND zip <= ?)
   ```
-  For input:
+简化记忆规则：**对象用 `AND`，数组用 `OR`**。下面列出所有支持的谓词，然后再看几个示例。
+
+##### 谓词（Predicates）
+
+- `$eq` 和 `$neq` - 所有类型可用
+- `$gt`、`$lt`、`$gte`、`$lte` - 数字、字符串、时间戳可用
+- `$like` 和 `$nlike` - 仅字符串类型可用
+- `$ilike` 和 `$nilike` - 大小写不敏感的 `LIKE`/`NOT LIKE`。仅 PostgreSQL 原生支持；
+  当配置了匹配的 `Dialect` 时，在 MySQL/SQLite 上会自动翻译为 `LOWER(col) LIKE LOWER(?)` / `LOWER(col) NOT LIKE LOWER(?)`。
+  若未配置 `Dialect`，会输出原始的 `ILIKE`/`NOT ILIKE` SQL（在这些数据库上会执行失败）。
+- `$regex` - 正则匹配。SQL 关键字取决于 `Dialect`：MySQL/SQLite 上为 `REGEXP ?`
+  （SQLite 需加载 `regexp` 扩展），PostgreSQL 上为 `~ ?`。未配置 `Dialect` 时输出 `REGEXP ?`。
+  仅适用于字符串字段。
+- `$in` 和 `$nin` - `IN` / `NOT IN` 值列表，所有类型可用
+- `$between` 和 `$nbetween` - `BETWEEN` / `NOT BETWEEN` 一对边界，数字和时间戳可用
+- `$isnull` 和 `$isnotnull` - `IS NULL` / `IS NOT NULL`，所有类型可用。值会被忽略
+  （例如 `{"name": {"$isnull": true}}`）。
+- `$not` - 对子条件对象取反。将内部条件用 `NOT (...)` 包裹。
+  例如：
+  ```
+  输入：
   {
     "$not": { "age": { "$gt": 10 }, "name": "foo" }
   }
 
-  Result is: NOT (age > ? AND name = ?)
+  结果：NOT (age > ? AND name = ?)
   ```
-- `$nor` - negated disjunction of a list of condition objects. Equivalent to `NOT (... OR ...)`.
-  For example:
+- `$nor` - 对条件对象数组取"或非"。等价于 `NOT (... OR ...)`。
+  例如：
   ```
-  For input:
+  输入：
   {
     "$nor": [
       { "age": 10 },
@@ -243,23 +250,24 @@ To simplify that, the rule is `AND` for objects and `OR` for arrays. Let's go ov
     ]
   }
 
-  Result is: NOT (age = ? OR age = ?)
+  结果：NOT (age = ? OR age = ?)
   ```
 
-If a user tries to apply an unsupported predicate on a field it will get an informative error. For example:
+如果用户对字段使用了不支持的谓词，会得到清晰的错误。例如：
 ```
-For input:
+输入：
 {
   "age": {
     "$like": "%0"
   }
 }
 
-Result is: can not apply op "$like" on field "age"
+结果：can not apply op "$like" on field "age"
 ```
 
-## Examples
-Assume this is the parser for all examples.
+## 示例
+
+下面所有示例都假设 parser 定义如下：
 ```go
 
 var QueryParser = rql.MustNewParser(rql.Config{
@@ -276,7 +284,7 @@ type User struct {
 	CreatedAt   time.Time `rql:"filter,sort"`
 }
 ```
-#### Simple Example
+#### 简单示例
 ```go
 params, err := QueryParser.Parse([]byte(`{
   "limit": 25,
@@ -294,12 +302,12 @@ fmt.Println(params.FilterExp)	// "name = ?"
 fmt.Println(params.FilterArgs)	// [true]
 ```
 
-In this case you've a valid generated `rql.Param` object and you can pass its to your favorite package connector.
+这里你会得到一个合法的 `rql.Param` 对象，可以把它传给你喜欢的 ORM 或查询连接器。
 
 ```go
 var users []*User
 
-// entgo.io (A type-safe entity framework)
+// entgo.io（类型安全的 entity 框架）
 users, err = client.User.Query().
     Where(func(s *sql.Selector) {
         s.Where(sql.ExprP(p.FilterExp, p.FilterArgs...))
@@ -333,10 +341,10 @@ err = db.Model(&users).
 	Select()
 must(err, "failed to query pg/orm")
 
-// Have more example? feel free to add.
+// 还有更多示例？欢迎补充。
 ```
 
-#### Medium Example
+#### 中级示例
 ```go
 params, err := QueryParser.Parse([]byte(`{
   "limit": 25,
@@ -362,17 +370,72 @@ fmt.Println(params.FilterArgs)	// [true, Time(2018-01-01T16:00:00.000Z), Time(20
 ```
 
 
-## Future Plans and Contributions
-If you want to help with the development of this package, here is a list of options things I want to add
-- [ ] JS library for query building
-- [ ] Option to ignore validation with specific tag
-- [ ] Add a `Dialect` config option so that `$ilike`/`$nilike` can transparently translate to `LOWER(col) LIKE LOWER(?)`
-      on databases that do not support `ILIKE` natively (MySQL/SQLite)
-- [ ] Automatically (or by config) filter and sort `gorm.Model` fields
-- [ ] benchcmp for PRs
-- [ ] Support MongoDB. Output need to be a bison object. here's a [usage example](https://gist.github.com/congjf/8035830)
-- [ ] Right now rql assume all fields are flatted in the db, even for nested fields.
-  For example, if you have a struct like this:
+## 数据库方言（Dialect）
+
+`Dialect` 配置项控制方言相关操作符（`$ilike`/`$nilike`/`$regex`）如何翻译为 SQL。请将其设置为与生产数据库一致：
+
+```go
+var QueryParser = rql.MustNewParser(rql.Config{
+    Model:   User{},
+    Dialect: rql.DialectPostgreSQL, // 或 DialectMySQL / DialectSQLite
+})
+```
+
+| 方言                | `$ilike` / `$nilike`             | `$regex`              |
+|---------------------|-----------------------------------|-----------------------|
+| `DialectPostgreSQL` | `col ILIKE ?` / `col NOT ILIKE ?`| `col ~ ?`             |
+| `DialectMySQL`      | `LOWER(col) LIKE LOWER(?)`        | `col REGEXP ?`        |
+| `DialectSQLite`     | `LOWER(col) LIKE LOWER(?)`         | `col REGEXP ?`（需加载 `regexp` 扩展） |
+| `""`（空）          | 原始 `ILIKE` / `NOT ILIKE`         | 原始 `REGEXP`          |
+
+当 `Dialect` 为空时，rql 会输出原始关键字（`ILIKE`/`REGEXP`），由数据库自行决定是否拒绝。**建议：显式设置 `Dialect` 与生产数据库匹配。**
+
+非法方言值（例如 `Dialect: "oracle"`）会让 `NewParser` 返回错误。
+
+## Group By、Having 与 Distinct
+
+rql 通过三个可选的顶层字段支持 `GROUP BY`、`HAVING` 和 `SELECT DISTINCT`：
+
+```json
+{
+    "select": ["name"],
+    "distinct": true,
+    "filter": { "age": { "$gt": 18 } },
+    "group": ["age"],
+    "having": { "COUNT(*)": { "$gte": 5 } }
+}
+```
+
+输出的 `Params` 暴露如下字段：
+
+| 字段         | 描述                                    | 示例                  |
+|--------------|-----------------------------------------|-----------------------|
+| `GroupExp`   | `GROUP BY` 的逗号分隔列名               | `"age"`               |
+| `HavingExp`  | `HAVING` 的 SQL 表达式（含 `?` 占位符） | `"COUNT(*) >= ?"`     |
+| `HavingArgs` | `HavingExp` 对应的参数值                | `[5]`                 |
+| `Distinct`   | 为 true 时调用方应输出 `SELECT DISTINCT` | `true`                |
+
+要在 `having` 中引用聚合表达式，需通过 `column=` tag 选项声明一个专用字段：
+
+```go
+type UserStat struct {
+    Age   int    `rql:"filter"`
+    Count int    `rql:"filter,column=COUNT(*)"`
+}
+```
+
+然后在 `having` 对象中用 `"COUNT(*)"` 作为 key。上面的示例会生成 `HAVING COUNT(*) >= ?`，参数为 `5`。
+
+## 后续计划与贡献
+
+如果你想参与本项目的开发，下面是一些待办事项：
+- [ ] 用于构建查询的 JS 库
+- [ ] 通过特定 tag 跳过校验的选项
+- [ ] 自动（或通过配置）过滤和排序 `gorm.Model` 字段
+- [ ] 为 PR 添加 benchcmp
+- [ ] 支持 MongoDB。输出需为 bson 对象。这里有一个 [使用示例](https://gist.github.com/congjf/8035830)
+- [ ] 目前 rql 假设所有字段都被打平存储在表中，即便是嵌套字段也是如此。
+  例如，给定如下 struct：
   ```go
   type User struct {
       Address struct {
@@ -380,20 +443,21 @@ If you want to help with the development of this package, here is a list of opti
       }
   }
   ```
-  rql assumes that the `address_name` field exists in the table. Sometimes it's not the case and `address` exists in
-  a different table. Therefore, I want to add the `table=` option for fields, and support nested queries.
-- [ ] Code generation version - low priority
+  rql 假设表中存在 `address_name` 字段。但有时并非如此，`address` 可能存储在另一张表里。因此我希望为字段增加 `table=` 选项，并支持嵌套查询。
+- [ ] 代码生成版本 - 低优先级
 
-## Performance and Reliability
-The performance of RQL looks pretty good, but there is always a room for improvement. Here's the current bench result:
+## 性能与可靠性
 
-|      __Test__       | __Time/op__    | __B/op__   | __allocs/op__  |
+RQL 的性能表现相当不错，但总有优化空间。当前基准测试结果如下：
+
+|      __测试__       | __Time/op__    | __B/op__   | __allocs/op__  |
 |---------------------|----------------|------------|----------------|
 | Small               |    1809        |   960      |   19           |
 | Medium              |    6030        |   3100     |   64           |
 | Large               |    14726       |   7625     |   148          |
 
-I ran fuzzy testing using `go-fuzz` and I didn't see any crashes. You are welcome to run by yourself and find potential failures. 
+我使用 `go-fuzz` 做过模糊测试，没有发现任何崩溃。欢迎你自行运行测试，找出潜在问题。
 
 ## LICENSE
-I am providing code in the repository to you under MIT license. Because this is my personal repository, the license you receive to my code is from me and not my employer (Facebook)
+
+本仓库代码基于 MIT 协议开源。由于这是我的个人仓库，你获得的我代码的授权来自我本人，而非我的雇主（Facebook）。
