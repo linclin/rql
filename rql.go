@@ -298,18 +298,18 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 		filterOps = append(filterOps, EQ, NEQ, IN, NIN, ISNULL, ISNOTNULL)
 	case reflect.String:
 		f.ValidateFn = validateString
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, LIKE, NLIKE, IN, NIN, ISNULL, ISNOTNULL)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, LIKE, NLIKE, ILIKE, NILIKE, REGEX, IN, NIN, ISNULL, ISNOTNULL)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		f.ValidateFn = validateInt
 		f.CovertFn = convertInt
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		f.ValidateFn = validateUInt
 		f.CovertFn = convertInt
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Float32, reflect.Float64:
 		f.ValidateFn = validateFloat
-		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+		filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 	case reflect.Struct:
 		switch v := reflect.Zero(typ); v.Interface().(type) {
 		case sql.NullBool:
@@ -321,21 +321,21 @@ func (p *Parser) parseField(sf reflect.StructField) error {
 		case sql.NullInt64:
 			f.ValidateFn = validateInt
 			f.CovertFn = convertInt
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 		case sql.NullFloat64:
 			f.ValidateFn = validateFloat
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 		case time.Time:
 			f.ValidateFn = validateTime(layout)
 			f.CovertFn = convertTime(layout)
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 		default:
 			if !v.Type().ConvertibleTo(reflect.TypeOf(time.Time{})) {
 				return fmt.Errorf("rql: field type for %q is not supported", sf.Name)
 			}
 			f.ValidateFn = validateTime(layout)
 			f.CovertFn = convertTime(layout)
-			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, ISNULL, ISNOTNULL)
+			filterOps = append(filterOps, EQ, NEQ, LT, LTE, GT, GTE, IN, NIN, BETWEEN, NBETWEEN, ISNULL, ISNOTNULL)
 		}
 	default:
 		return fmt.Errorf("rql: field type for %q is not supported", sf.Name)
@@ -409,6 +409,14 @@ func (p *parseState) and(f map[string]interface{}) {
 			terms, ok := v.([]interface{})
 			expect(ok, "$and must be type array")
 			p.relOp(AND, terms)
+		case k == p.op(NOR):
+			terms, ok := v.([]interface{})
+			expect(ok, "$nor must be type array")
+			p.relOp(NOR, terms)
+		case k == p.op(NOT):
+			term, ok := v.(map[string]interface{})
+			expect(ok, "$not must be type object")
+			p.notOp(term)
 		case p.fields[k] != nil:
 			expect(p.fields[k].Filterable, "field %q is not filterable", k)
 			p.field(p.fields[k], v)
@@ -419,9 +427,25 @@ func (p *parseState) and(f map[string]interface{}) {
 	}
 }
 
+// notOp wraps a sub-condition with NOT (...).
+// It supports a single condition object (e.g. {"age": {"$gt": 10}}).
+func (p *parseState) notOp(term map[string]interface{}) {
+	p.WriteString("NOT (")
+	p.and(term)
+	p.WriteByte(')')
+}
+
 func (p *parseState) relOp(op Op, terms []interface{}) {
+	// NOR is logically "NOT (... OR ...)". We wrap the disjunction with NOT (...)
+	// so the inner separator stays OR, and skip the inner parentheses to avoid
+	// producing NOT ((...) OR (...)).
+	if op == NOR {
+		p.WriteString("NOT (")
+		defer func() { p.WriteByte(')') }()
+	}
 	var i int
-	if len(terms) > 1 {
+	// For NOR, the outer NOT (...) already provides grouping; no extra parens needed.
+	if len(terms) > 1 && op != NOR {
 		p.WriteByte('(')
 	}
 	for _, t := range terms {
@@ -435,7 +459,7 @@ func (p *parseState) relOp(op Op, terms []interface{}) {
 		p.and(mt)
 		i++
 	}
-	if len(terms) > 1 {
+	if len(terms) > 1 && op != NOR {
 		p.WriteByte(')')
 	}
 }
@@ -473,13 +497,13 @@ func (p *parseState) field(f *field, v interface{}) {
 				p.values = append(p.values, f.CovertFn(elem))
 			}
 			p.WriteByte(')')
-		case BETWEEN:
+		case BETWEEN, NBETWEEN:
 			arr, ok := opVal.([]interface{})
-			expect(ok, "value for $between must be type array")
-			expect(len(arr) == 2, "value for $between must contain exactly 2 elements")
-			must(f.ValidateFn(arr[0]), "invalid datatype in $between for field %q", f.Name)
-			must(f.ValidateFn(arr[1]), "invalid datatype in $between for field %q", f.Name)
-			p.WriteString(p.colName(f.Name) + " BETWEEN ? AND ?")
+			expect(ok, "value for %s must be type array", opName)
+			expect(len(arr) == 2, "value for %s must contain exactly 2 elements", opName)
+			must(f.ValidateFn(arr[0]), "invalid datatype in %s for field %q", opName, f.Name)
+			must(f.ValidateFn(arr[1]), "invalid datatype in %s for field %q", opName, f.Name)
+			p.WriteString(p.colName(f.Name) + " " + op.SQL() + " ? AND ?")
 			p.values = append(p.values, f.CovertFn(arr[0]), f.CovertFn(arr[1]))
 		case ISNULL:
 			p.WriteString(p.colName(f.Name) + " IS NULL")

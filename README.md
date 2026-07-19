@@ -213,7 +213,38 @@ To simplify that, the rule is `AND` for objects and `OR` for arrays. Let's go ov
 ##### Predicates
 - `$eq` and `$neq` - can be used on all types
 - `$gt`, `$lt`, `$gte` and `$lte` - can be used on numbers, strings, and timestamp
-- `$like` - can be used only on type string
+- `$like` and `$nlike` - can be used only on type string
+- `$ilike` and `$nilike` - case-insensitive `LIKE`/`NOT LIKE`. Only PostgreSQL supports these natively;
+  on MySQL/SQLite use `LOWER(col) LIKE LOWER(?)` via a custom column name or wrap the value yourself.
+- `$regex` - regex matching via the SQL `REGEXP` operator. Supported by MySQL and PostgreSQL;
+  SQLite needs the `regexp` extension. Only applicable to string fields.
+- `$in` and `$nin` - `IN` / `NOT IN` list of values, can be used on all types
+- `$between` and `$nbetween` - `BETWEEN` / `NOT BETWEEN` a pair of bounds, can be used on numbers and timestamps
+- `$isnull` and `$isnotnull` - `IS NULL` / `IS NOT NULL`, can be used on all types. The value is ignored
+  (e.g. `{"name": {"$isnull": true}}`).
+- `$not` - negates a sub-condition object. Wraps the inner condition with `NOT (...)`.
+  For example:
+  ```
+  For input:
+  {
+    "$not": { "age": { "$gt": 10 }, "name": "foo" }
+  }
+
+  Result is: NOT (age > ? AND name = ?)
+  ```
+- `$nor` - negated disjunction of a list of condition objects. Equivalent to `NOT (... OR ...)`.
+  For example:
+  ```
+  For input:
+  {
+    "$nor": [
+      { "age": 10 },
+      { "age": 20 }
+    ]
+  }
+
+  Result is: NOT (age = ? OR age = ?)
+  ```
 
 If a user tries to apply an unsupported predicate on a field it will get an informative error. For example:
 ```
@@ -335,7 +366,8 @@ fmt.Println(params.FilterArgs)	// [true, Time(2018-01-01T16:00:00.000Z), Time(20
 If you want to help with the development of this package, here is a list of options things I want to add
 - [ ] JS library for query building
 - [ ] Option to ignore validation with specific tag
-- [ ] Add `$not` and `$nor` operators
+- [ ] Add a `Dialect` config option so that `$ilike`/`$nilike` can transparently translate to `LOWER(col) LIKE LOWER(?)`
+      on databases that do not support `ILIKE` natively (MySQL/SQLite)
 - [ ] Automatically (or by config) filter and sort `gorm.Model` fields
 - [ ] benchcmp for PRs
 - [ ] Support MongoDB. Output need to be a bison object. here's a [usage example](https://gist.github.com/congjf/8035830)

@@ -16,21 +16,27 @@ func (o Op) SQL() string {
 
 // Operators that support by rql.
 const (
-	EQ       = Op("eq")       // =
-	NEQ      = Op("neq")      // <>
-	LT       = Op("lt")       // <
-	GT       = Op("gt")       // >
-	LTE      = Op("lte")      // <=
-	GTE      = Op("gte")      // >=
-	LIKE     = Op("like")     // LIKE "PATTERN"
-	NLIKE    = Op("nlike")    // NOT LIKE "PATTERN"
-	IN       = Op("in")       // IN (v1, v2, ...)
-	NIN      = Op("nin")      // NOT IN (v1, v2, ...)
-	BETWEEN  = Op("between")  // BETWEEN v1 AND v2
-	ISNULL   = Op("isnull")   // IS NULL
+	EQ        = Op("eq")        // =
+	NEQ       = Op("neq")       // <>
+	LT        = Op("lt")       // <
+	GT        = Op("gt")       // >
+	LTE       = Op("lte")      // <=
+	GTE       = Op("gte")      // >=
+	LIKE      = Op("like")     // LIKE "PATTERN"
+	NLIKE     = Op("nlike")    // NOT LIKE "PATTERN"
+	ILIKE     = Op("ilike")    // ILIKE "PATTERN" (case-insensitive, PostgreSQL)
+	NILIKE    = Op("nilike")   // NOT ILIKE "PATTERN" (case-insensitive, PostgreSQL)
+	REGEX     = Op("regex")    // REGEXP "PATTERN" (MySQL/PostgreSQL/SQLite with extension)
+	IN        = Op("in")       // IN (v1, v2, ...)
+	NIN       = Op("nin")      // NOT IN (v1, v2, ...)
+	BETWEEN   = Op("between")  // BETWEEN v1 AND v2
+	NBETWEEN  = Op("nbetween") // NOT BETWEEN v1 AND v2
+	ISNULL    = Op("isnull")   // IS NULL
 	ISNOTNULL = Op("isnotnull") // IS NOT NULL
-	OR       = Op("or")       // disjunction
-	AND      = Op("and")      // conjunction
+	OR        = Op("or")       // disjunction
+	AND       = Op("and")      // conjunction
+	NOR       = Op("nor")      // negated disjunction (NOT (... OR ...))
+	NOT       = Op("not")      // negation of a sub-condition
 )
 
 // Special operators that have non-standard SQL syntax (not "col OP ?").
@@ -38,8 +44,17 @@ var specialOps = map[Op]bool{
 	IN:        true,
 	NIN:       true,
 	BETWEEN:   true,
+	NBETWEEN:  true,
 	ISNULL:    true,
 	ISNOTNULL: true,
+}
+
+// Logical operators that wrap a sub-condition or a list of sub-conditions.
+var logicalOps = map[Op]bool{
+	OR:  true,
+	AND: true,
+	NOR: true,
+	NOT: true,
 }
 
 // Default values for configuration.
@@ -71,13 +86,19 @@ var (
 		GTE:       ">=",
 		LIKE:      "LIKE",
 		NLIKE:     "NOT LIKE",
+		ILIKE:     "ILIKE",
+		NILIKE:    "NOT ILIKE",
+		REGEX:     "REGEXP",
 		IN:        "IN",
 		NIN:       "NOT IN",
 		BETWEEN:   "BETWEEN",
+		NBETWEEN:  "NOT BETWEEN",
 		ISNULL:    "IS NULL",
 		ISNOTNULL: "IS NOT NULL",
 		OR:        "OR",
 		AND:       "AND",
+		NOR:       "OR",
+		NOT:       "NOT",
 	}
 )
 

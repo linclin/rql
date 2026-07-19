@@ -891,7 +891,7 @@ func TestParse(t *testing.T) {
 			input: []byte(`{
 				"filter": {
 					"name": {
-						"$regex": ".*"
+						"$unknown": ".*"
 					}
 				}
 			}`),
@@ -1074,6 +1074,231 @@ func TestParse(t *testing.T) {
 				Limit:      25,
 				FilterExp:  "(name IN (?, ?) AND name NOT LIKE ?) AND (age BETWEEN ? AND ? AND age IS NOT NULL)",
 				FilterArgs: []interface{}{"foo", "bar", "%test%", 18, 65},
+			},
+		},
+		{
+			name: "nbetween operator",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"age": { "$nbetween": [18, 30] }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "age NOT BETWEEN ? AND ?",
+				FilterArgs: []interface{}{18, 30},
+			},
+		},
+		{
+			name: "nbetween mismatched length",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"age": { "$nbetween": [18] }
+				}
+			}`),
+			wantErr: true,
+		},
+		{
+			name: "ilike operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$ilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name ILIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "nilike operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$nilike": "%foo%" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name NOT ILIKE ?",
+				FilterArgs: []interface{}{"%foo%"},
+			},
+		},
+		{
+			name: "regex operator",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$regex": "^foo" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "name REGEXP ?",
+				FilterArgs: []interface{}{"^foo"},
+			},
+		},
+		{
+			name: "regex not supported on int field",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"age": { "$regex": "^foo" }
+				}
+			}`),
+			wantErr: true,
+		},
+		{
+			name: "not operator",
+			conf: Config{
+				Model: struct {
+					Age  int    `rql:"filter"`
+					Name string `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$not": { "age": { "$gt": 10 }, "name": "foo" }
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "NOT (age > ? AND name = ?)",
+				FilterArgs: []interface{}{10, "foo"},
+			},
+		},
+		{
+			name: "not operator with wrong type",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$not": [{ "age": { "$gt": 10 } }]
+				}
+			}`),
+			wantErr: true,
+		},
+		{
+			name: "nor operator",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$nor": [
+						{ "age": 10 },
+						{ "age": 20 }
+					]
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "NOT (age = ? OR age = ?)",
+				FilterArgs: []interface{}{10, 20},
+			},
+		},
+		{
+			name: "nor operator with single term",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$nor": [
+						{ "age": 10 }
+					]
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "NOT (age = ?)",
+				FilterArgs: []interface{}{10},
+			},
+		},
+		{
+			name: "nor operator with wrong type",
+			conf: Config{
+				Model: struct {
+					Age int `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"$nor": { "age": 10 }
+				}
+			}`),
+			wantErr: true,
+		},
+		{
+			name: "combined all new operators",
+			conf: Config{
+				Model: struct {
+					Name string `rql:"filter"`
+					Age  int    `rql:"filter"`
+				}{},
+				DefaultLimit: 25,
+			},
+			input: []byte(`{
+				"filter": {
+					"name": { "$ilike": "%foo%", "$regex": "^bar" },
+					"age": { "$nbetween": [18, 65] },
+					"$not": { "name": "baz" },
+					"$nor": [
+						{ "age": 0 },
+						{ "age": 200 }
+					]
+				}
+			}`),
+			wantOut: &Params{
+				Limit:      25,
+				FilterExp:  "(name ILIKE ? AND name REGEXP ?) AND age NOT BETWEEN ? AND ? AND NOT (name = ?) AND NOT (age = ? OR age = ?)",
+				FilterArgs: []interface{}{"%foo%", "^bar", 18, 65, "baz", 0, 200},
 			},
 		},
 	}
